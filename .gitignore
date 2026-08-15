@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+._*
+
+# Arduino IDE — "Export compiled binary" writes here
+build/
+*.bin
+*.elf
+*.hex
+*.map
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# CAD working files (STL and STEP are deliverables — do not ignore those)
+*.FCStd1
+*.f3d
+*.bak
+
+# Local secrets — never commit a private UUID or API key
+secrets.h
+*.local.h
