@@ -85,6 +85,26 @@ disparaît à chaque reset. Double appui sur RESET pour forcer le bootloader.
 Vérifiez que le câble est bien un câble de données — les câbles USB de charge
 seule sont le piège classique.
 
+### Tout compile mais le moniteur série devient muet
+
+Arduino-ESP32 compile les cibles RISC-V avec **newlib-nano**, qui n'implémente
+pas le formatage des flottants. Un seul `%f` dans un `Serial.printf` peut
+avaler la ligne entière ou afficher n'importe quoi — et le symptôme ressemble à
+une carte plantée, pas à un problème de formatage.
+
+C'est pourquoi le firmware fourni travaille exclusivement en entiers :
+`DIVIDER_X100` et `BAT_CAL_X1000` sont des entiers mis à l'échelle, affichés
+par division et modulo. Conservez ce principe.
+
+### `redefinition of 'setup()'` et une dizaine d'erreurs semblables
+
+L'IDE Arduino concatène **tous les `.ino` d'un dossier de croquis** avant de
+compiler. Deux variantes de firmware côte à côte, c'est deux `setup()`, deux
+`BEACON_UUID`, et ainsi de suite.
+
+Un croquis par dossier, et le nom du dossier doit correspondre à celui du
+`.ino`. Profitez-en pour éviter les espaces dans les noms.
+
 ## Les distances sont fausses
 
 Systématiquement **trop courtes** : `TX_POWER_1M` est trop bas. Systématiquement

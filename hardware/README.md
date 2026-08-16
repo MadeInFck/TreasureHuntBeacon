@@ -10,6 +10,7 @@ external circuitry you have to add for battery operation.
 | Board | Size (mm) | Charging | VBAT sense | u.FL antenna | External parts |
 |---|---|---|---|---|---|
 | M5Stack NanoC6 | 23.5 × 12 × 9.5 | no | no | no | 5 |
+| LOLIN C3 Pico | 25.4 × 25.4 | yes | **yes**, once bridged | no | 1 |
 | XIAO ESP32C3 | 21 × 17.5 | yes | no | **only** u.FL | 3 |
 | XIAO ESP32C6 | 21 × 17.5 | yes | no | ceramic + u.FL, software switch | 3 |
 | Unexpected Maker TinyC6 | 35 × 17.8 × 4.3 | yes | **yes** | chosen at purchase | 1 |
@@ -24,6 +25,25 @@ external). That keeps the choice open after the enclosure is printed. The
 ESP32C3 has no on-board antenna at all: the supplied external antenna is
 mandatory, and a u.FL connector that works loose degrades range silently
 without an obvious failure.
+
+### The LOLIN C3 Pico solder bridge
+
+The C3 Pico **does** have a VBAT divider feeding GPIO3, but WEMOS ships it
+**disconnected** so the pin stays free for other uses. Nothing in the feature
+list mentions it. Bridge the two pads on the underside of the board and the
+divider comes alive.
+
+Measured after bridging: 2010 mV at the pin for a cell reading 4.01 V on a
+multimeter — a 1.995:1 ratio, so `DIVIDER_X100 = 200` needs no correction.
+
+Before bridging, GPIO1, GPIO3 and GPIO4 all read 420–600 mV and wandered by
+tens of millivolts, cell connected or not: the signature of a floating input.
+`firmware/vbat_probe` exists to make that call without guesswork — it samples
+every ADC1 pin with and without the cell and reports the difference.
+
+WEMOS uses the same pattern elsewhere: the charge status LED is also an
+unpopulated footprint. If a feature seems missing on a WEMOS board, look for
+pads before concluding it is absent.
 
 ## Power
 

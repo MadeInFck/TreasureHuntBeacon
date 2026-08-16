@@ -82,6 +82,26 @@ Native-USB boards only enumerate once running, and the port disappears at each
 reset. Double-press RESET to force the bootloader. Check the cable is a data
 cable — charge-only USB cables are the classic time sink.
 
+### Everything compiles but the serial monitor goes quiet
+
+Arduino-ESP32 builds RISC-V targets against **newlib-nano**, which does not
+implement floating point formatting. A single `%f` in a `Serial.printf` can
+swallow the whole line or print garbage — and the failure looks like the board
+has stopped rather than a formatting bug.
+
+The shipped firmware uses integer maths everywhere for this reason:
+`DIVIDER_X100` and `BAT_CAL_X1000` are scaled integers printed with
+division and modulo. Keep it that way.
+
+### `redefinition of 'setup()'` and a dozen similar errors
+
+The Arduino IDE concatenates **every `.ino` in a sketch folder** before
+compiling. Two firmware variants side by side means two `setup()`, two
+`BEACON_UUID`, and so on.
+
+One sketch per folder, and the folder name must match the `.ino` name. Avoid
+spaces in sketch names while you are at it.
+
 ## Distances are wrong
 
 Consistently **too short** means `TX_POWER_1M` is too low. Consistently too

@@ -95,6 +95,24 @@ Total advertising payload: 3 bytes of flags + 27 bytes of manufacturer data
 structure = **30 of the 31 available bytes**. There is no room for a device
 name. This is why the firmware calls `BLEDevice::init("")` with an empty string.
 
+
+### Status LED
+
+Boards with an RGB LED signal their identity at power-up, once:
+
+| Signal | Meaning |
+|---|---|
+| 1 white flash | booting |
+| N violet blinks | hunt number (MAJOR) |
+| M blue blinks | step number |
+
+Then a brief pulse every 5 s: **green** alive, **amber** battery low, **red**
+battery critical. Red appears nowhere else, so a red pulse always means the
+cell needs attention.
+
+Arm the beacon, count violet, count blue, check the pulse colour, close the
+box. That is the whole pre-flight check, no phone needed.
+
 ---
 
 ## Using a commercial beacon
@@ -119,7 +137,9 @@ user-configurable.
 |---|---|
 | Firmware | [`firmware/beacon/`](firmware/beacon/) |
 | Board choice and wiring | [`hardware/`](hardware/) |
+| Enclosure | [`enclosure/`](enclosure/) |
 | TX power calibration | [`docs/calibration.md`](docs/calibration.md) |
+| Battery and autonomy | [`docs/battery.md`](docs/battery.md) |
 | When nothing is detected | [`docs/troubleshooting.md`](docs/troubleshooting.md) |
 
 Minimum to get a beacon on the air: an ESP32 board with BLE, a USB cable, and
@@ -133,9 +153,11 @@ the Arduino IDE with the ESP32 core 3.x. Battery and enclosure come later.
 firmware/
   beacon/          Beacon firmware — flash one per hunt step
   scanner/         Bench scanner — decodes frames, useful for validation
+  vbat_probe/      Differential probe — finds a board's VBAT divider
   CONFIGURATION.md Per-beacon settings
 hardware/          Boards, wiring diagrams, bill of materials
-docs/              Calibration and troubleshooting
+enclosure/         Parametric OpenSCAD case, ready-made STLs
+docs/              Calibration, battery, troubleshooting
 ```
 
 Code comments are in English only, to keep a single source of truth.

@@ -101,6 +101,25 @@ Charge utile totale : 3 octets de flags + 27 octets de structure constructeur =
 d'appareil, d'où l'appel `BLEDevice::init("")` avec une chaîne vide dans le
 firmware.
 
+
+### LED de statut
+
+Les cartes dotées d'une LED RGB annoncent leur identité au démarrage, une fois :
+
+| Signal | Signification |
+|---|---|
+| 1 flash blanc | amorçage |
+| N clignotements violets | numéro de chasse (MAJOR) |
+| M clignotements bleus | numéro d'étape |
+
+Puis une brève pulsation toutes les 5 s : **vert** vivante, **ambre** batterie
+faible, **rouge** batterie critique. Le rouge n'apparaît nulle part ailleurs :
+une pulsation rouge signifie toujours que la cellule demande attention.
+
+On arme la balise, on compte les violets, on compte les bleus, on vérifie la
+couleur de la pulsation, on referme. C'est tout le contrôle avant-vol, sans
+téléphone.
+
 ---
 
 ## Utiliser une balise du commerce
@@ -125,7 +144,9 @@ est configurable par l'utilisateur.
 |---|---|
 | Firmware | [`firmware/beacon/`](firmware/beacon/) |
 | Choix de carte et câblage | [`hardware/`](hardware/README.fr.md) |
+| Boîtier | [`enclosure/`](enclosure/README.fr.md) |
 | Calibration du TX power | [`docs/calibration.fr.md`](docs/calibration.fr.md) |
+| Batterie et autonomie | [`docs/battery.fr.md`](docs/battery.fr.md) |
 | Quand rien n'est détecté | [`docs/troubleshooting.fr.md`](docs/troubleshooting.fr.md) |
 
 Le minimum pour mettre une balise en l'air : une carte ESP32 avec BLE, un câble
@@ -140,9 +161,11 @@ boîtier viendront ensuite.
 firmware/
   beacon/          Firmware de la balise — un flash par étape de chasse
   scanner/         Scanner de banc — décode les trames, utile en validation
+  vbat_probe/      Sonde différentielle — localise un pont diviseur VBAT
   CONFIGURATION.md Réglages propres à chaque balise
 hardware/          Cartes, schémas de câblage, nomenclature
-docs/              Calibration et dépannage
+enclosure/         Boîtier paramétrique OpenSCAD, STL prêts à trancher
+docs/              Calibration, batterie, dépannage
 ```
 
 Les commentaires du code sont en anglais uniquement, pour conserver une source

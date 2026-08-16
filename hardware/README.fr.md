@@ -11,6 +11,7 @@ batterie.
 | Carte | Taille (mm) | Charge | Mesure VBAT | Antenne u.FL | Composants externes |
 |---|---|---|---|---|---|
 | M5Stack NanoC6 | 23,5 × 12 × 9,5 | non | non | non | 5 |
+| LOLIN C3 Pico | 25,4 × 25,4 | oui | **oui**, après pontage | non | 1 |
 | XIAO ESP32C3 | 21 × 17,5 | oui | non | u.FL **uniquement** | 3 |
 | XIAO ESP32C6 | 21 × 17,5 | oui | non | céramique + u.FL, bascule logicielle | 3 |
 | Unexpected Maker TinyC6 | 35 × 17,8 × 4,3 | oui | **oui** | choisie à l'achat | 1 |
@@ -26,6 +27,27 @@ RF, GPIO14 au niveau haut sélectionne l'externe). Le choix reste donc ouvert
 après impression du boîtier. L'ESP32C3 n'a aucune antenne intégrée : l'antenne
 externe fournie est obligatoire, et un u.FL qui se déboîte dégrade la portée
 sans panne visible.
+
+### Le pont à souder du LOLIN C3 Pico
+
+Le C3 Pico **possède bien** un pont diviseur VBAT relié à GPIO3, mais WEMOS le
+livre **déconnecté** pour laisser la broche libre. Rien dans la fiche produit ne
+le mentionne. Un pont d'étain entre les deux pastilles au dos de la carte
+l'active.
+
+Mesuré après pontage : 2010 mV à la broche pour une cellule à 4,01 V au
+multimètre — rapport de 1,995:1, donc `DIVIDER_X100 = 200` ne demande aucune
+correction.
+
+Avant pontage, GPIO1, GPIO3 et GPIO4 affichaient toutes 420 à 600 mV en
+dérivant de quelques dizaines de millivolts, cellule branchée ou non : la
+signature d'une entrée flottante. `firmware/vbat_probe` sert à trancher sans
+supposition — il échantillonne toutes les broches ADC1 avec et sans cellule et
+compare.
+
+WEMOS emploie le même principe ailleurs : la LED d'état de charge est aussi une
+empreinte non peuplée. Si une fonction semble absente sur une carte WEMOS,
+cherchez des pastilles avant de conclure.
 
 ## Alimentation
 
