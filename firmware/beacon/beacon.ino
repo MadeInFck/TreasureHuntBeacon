@@ -41,10 +41,17 @@
 //    DISCONNECTED so GPIO3 stays free. Bridge the two solder pads on the
 //    underside to enable it. Measured after bridging: 2010 mV at the pin
 //    for a 4.01 V cell -- a 1.995:1 ratio, so DIVIDER_X100 = 200 is right.
+//
+//  * The cutoff reads the DIVIDER, never the USB rail. With no cell
+//    plugged in, the divider is fed by nothing and the pin floats around
+//    400 mV, which looks exactly like a flat cell and used to put the
+//    board straight into deep sleep -- taking the native USB port with
+//    it. BAT_ABSENT_MV is the floor that tells the two cases apart.
 // =====================================================================
 
 #include <BLEDevice.h>
 #include <BLEUtils.h>
+#include <esp_sleep.h>
 
 // ---- BOARD SELECTION ------------------------------------------------
 #define BOARD_LOLIN_C3_PICO  1
@@ -55,24 +62,44 @@
 
 // ---- PER-BEACON SETTINGS --------------------------------------------
 #define HUNT_ID      1        // hunt number, MAJOR. Same across one hunt.
-#define STEP_ID      1        // step number, high byte of MINOR. One per beacon.
-#define TX_POWER_1M  (-59)    // raw RSSI an iPhone reads at 1 m. MEASURE IT,
+#define STEP_ID      2        // step number, high byte of MINOR. One per beacon.
+#define TX_POWER_1M  (-62)    // raw RSSI an iPhone reads at 1 m. MEASURE IT,
                               // per unit, in the final enclosure.
 
 // ---- FEATURES -------------------------------------------------------
 #define ENABLE_BATTERY_TELEMETRY  0   // 1 only once a VBAT divider is confirmed
 #define ENABLE_ADC_PROBE          0   // 1 to hunt for a divider on BAT_ADC_PIN
+#define ENABLE_LOW_VOLTAGE_CUTOFF 1   // stop and sleep before the cell is ruined
+
+// The cutoff needs a voltage reading. Without telemetry there is nothing
+// to act on, so it disables itself rather than pretend to protect.
+#if ENABLE_LOW_VOLTAGE_CUTOFF && !ENABLE_BATTERY_TELEMETRY
+  #undef  ENABLE_LOW_VOLTAGE_CUTOFF
+  #define ENABLE_LOW_VOLTAGE_CUTOFF 0
+  #define CUTOFF_UNAVAILABLE        1
+#endif
 
 // ---- BATTERY --------------------------------------------------------
 #define BAT_NOMINAL_MV  4000  // your measured cell voltage, used by the probe
-#define DIVIDER_X100    200   // divider ratio x100. Verified 1.995:1 -> 200.
+#define DIVIDER_X100    200   // divider ratio x100. Verified 1.995:1 -> 200
+                              // on a bridged LOLIN C3 Pico.
 #define BAT_CAL_X1000   1000  // trim x1000. Measured within 0.5%: no correction.
 #define BAT_SAMPLES     9     // odd, median filtered
 #define BAT_PERIOD_MS   60000 // frame refresh cadence; 10000 while testing
 #define BAT_HYSTERESIS  2     // 2 steps = 20 mV before the frame is rewritten
 
-#define BAT_LOW_MV      3500  // heartbeat turns amber below this
+#define BAT_LOW_MV      3500  // heartbeat turns yellow below this
 #define BAT_CRIT_MV     3300  // heartbeat turns red below this
+#define BAT_CUTOFF_MV   3200  // below this the beacon shuts itself down
+#define BAT_ABSENT_MV   2500  // BELOW this, assume NO CELL rather than a dead
+                              // one, and do not cut off. A LiPo genuinely at
+                              // 2.5 V is scrap anyway, so this floor hides no
+                              // real case -- but it keeps a USB-only board out
+                              // of deep sleep, which is how you develop.
+#define CUTOFF_STRIKES  3     // consecutive readings before acting, so a single
+                              // sag during a radio burst cannot trigger it
+#define CUTOFF_GRACE_MS 10000 // warning window at boot before sleeping, so the
+                              // board stays reachable
 
 // ---- ADC PROBE ------------------------------------------------------
 #define PROBE_PERIOD_MS 3000  // fast enough to watch a cell being plugged in
@@ -88,11 +115,13 @@
 // ALARM: never reuse it for a count.
 // Violet on a WS2812 is red+blue mixed; 180/0/255 keeps it clearly
 // distinct from the pure blue of the step count through a diffuser.
+// The low-battery colour needs its green channel high: below about 150
+// the red dominates and it reads as orange, or as red at low brightness.
 #define COL_BOOT     255, 255, 255   // white  - power-up flash
 #define COL_HUNT     180,   0, 255   // violet - hunt number count
 #define COL_STEP       0,   0, 255   // blue   - step number count
 #define COL_ALIVE      0, 255,   0   // green  - heartbeat, all well
-#define COL_LOW      255, 120,   0   // amber  - heartbeat, battery low
+#define COL_LOW      255, 200,   0   // yellow - heartbeat, battery low
 #define COL_CRIT     255,   0,   0   // red    - heartbeat, battery critical
 
 #define LED_BRIGHTNESS  24    // identify phase. Full tilt draws ~60 mA/channel.
@@ -132,11 +161,12 @@ static const uint8_t BEACON_UUID[16] = {
 };
 
 static uint8_t         mfg[25];   // library prepends length (0x1A) and type (0xFF)
-static BLEAdvertising *pAdv;
+static BLEAdvertising *pAdv      = NULL;
 static uint8_t         lastBat   = 0x00;
 static uint8_t         beatR = 0, beatG = 255, beatB = 0;   // heartbeat colour
 static uint32_t        lastCheck = 0, beatStart = 0;
 static bool            ledOn     = false;
+static uint8_t         strikes   = 0;
 
 #if ENABLE_ADC_PROBE
 static uint16_t probeMin = 0xFFFF, probeMax = 0;   // spread since boot
@@ -238,6 +268,10 @@ static uint16_t pinToBattery(uint16_t pinMv) {
   return (uint16_t)(((uint32_t)pinMv * DIVIDER_X100 * BAT_CAL_X1000) / 100000UL);
 }
 
+static uint16_t readBatteryMv() {
+  return pinToBattery(readPinMv(BAT_ADC_PIN));
+}
+
 static uint16_t expectedPinMv() {
   return (uint16_t)(((uint32_t)BAT_NOMINAL_MV * 100) / DIVIDER_X100);
 }
@@ -275,6 +309,52 @@ static uint8_t encodeBattery(uint16_t mv) {
 }
 
 // ---------------------------------------------------------------------
+//  Low-voltage cutoff
+//
+//  A beacon left switched on after a hunt would otherwise discharge its
+//  cell until the ESP32 browns out, well past the point where a LiPo
+//  takes permanent damage. This stops advertising and enters deep sleep
+//  with NO wake source: the beacon stays off until it is power-cycled,
+//  by which time you will be charging it anyway.
+//
+//  Deep sleep does not reach microamps on these boards -- the WS2812 and
+//  the regulator keep drawing on the order of a milliamp. It still cuts
+//  the drain by roughly fifty times, which is the point. The switch in
+//  series with the cell remains the only true zero.
+//
+//  It fires ONLY between BAT_ABSENT_MV and BAT_CUTOFF_MV. Below the
+//  floor there is no cell on the divider, and sleeping would just make
+//  the board unreachable for no benefit.
+// ---------------------------------------------------------------------
+#if ENABLE_LOW_VOLTAGE_CUTOFF
+static bool cellIsFlat(uint16_t mv) {
+  return mv >= BAT_ABSENT_MV && mv < BAT_CUTOFF_MV;
+}
+
+static void shutdownFlat(uint16_t mv, bool grace) {
+  Serial.printf("\nCUTOFF: %u mV is below %u mV.\n", mv, BAT_CUTOFF_MV);
+  if (grace)
+    Serial.printf("Sleeping in %u s -- double-tap RESET now to keep the port.\n",
+                  CUTOFF_GRACE_MS / 1000);
+  Serial.println("Charge the cell and power-cycle to restart.");
+  Serial.flush();
+
+  if (pAdv) pAdv->stop();
+
+  // Deep sleep takes the native USB port down with it, so warn visibly
+  // and leave a window before it happens.
+  uint32_t blinks = grace ? (CUTOFF_GRACE_MS / 800) : 3;
+  for (uint32_t i = 0; i < blinks; i++) {
+    ledSet(COL_CRIT);
+    delay(400);
+    ledOff();
+    delay(400);
+  }
+  esp_deep_sleep_start();                     // no wake source configured
+}
+#endif
+
+// ---------------------------------------------------------------------
 //  iBeacon payload
 // ---------------------------------------------------------------------
 static void buildPayload(uint8_t bat) {
@@ -287,7 +367,7 @@ static void buildPayload(uint8_t bat) {
   mfg[21] =  HUNT_ID       & 0xFF;
   mfg[22] = (minor   >> 8) & 0xFF;            // MINOR, big-endian
   mfg[23] =  minor         & 0xFF;
-  mfg[24] = (uint8_t)(int8_t)TX_POWER_1M;     // -62 -> 0xC2
+  mfg[24] = (uint8_t)(int8_t)TX_POWER_1M;     // -59 -> 0xC5
 }
 
 static void publish(uint8_t bat) {
@@ -340,10 +420,28 @@ void setup() {
   Serial.println("--> Compare VBAT against a multimeter on the cell.");
   Serial.println("    Off by a few %: set BAT_CAL_X1000 to");
   Serial.println("    multimeter * 1000 / VBAT, then reflash.");
+
+  #if ENABLE_LOW_VOLTAGE_CUTOFF
+  if (batMv < BAT_ABSENT_MV) {
+    Serial.printf("Cutoff     : INACTIVE -- %u mV is under the %u mV floor,\n",
+                  batMv, BAT_ABSENT_MV);
+    Serial.println("             so no cell is connected to the divider.");
+  } else if (cellIsFlat(batMv)) {
+    shutdownFlat(batMv, true);                // refuse to finish off a flat cell
+  } else {
+    Serial.printf("Cutoff     : armed at %u mV\n", BAT_CUTOFF_MV);
+  }
+  #endif
 #else
   lastBat = 0x00;                             // spec sentinel: no telemetry
   setBeatColor(0);                            // green: nothing to report
   Serial.println("Battery telemetry: OFF (MINOR low byte = 0x00)");
+  #ifdef CUTOFF_UNAVAILABLE
+  Serial.println("Low-voltage cutoff: DISABLED -- it needs a voltage reading.");
+  Serial.println("  Bridge or wire the VBAT divider, then set");
+  Serial.println("  ENABLE_BATTERY_TELEMETRY to 1. Until then the cell is");
+  Serial.println("  protected only by its own pack circuit, if it has one.");
+  #endif
 #endif
 
 #if ENABLE_ADC_PROBE
@@ -408,6 +506,17 @@ void loop() {
       publish(bat);
       Serial.print("  <- frame updated");
     }
+
+  #if ENABLE_LOW_VOLTAGE_CUTOFF
+    if (cellIsFlat(batMv)) {
+      strikes++;
+      Serial.printf("  <- below cutoff (%u/%u)", strikes, CUTOFF_STRIKES);
+      if (strikes >= CUTOFF_STRIKES) { Serial.println(); shutdownFlat(batMv, false); }
+    } else {
+      strikes = 0;
+    }
+  #endif
+
     Serial.println();
   }
 #endif
@@ -434,8 +543,13 @@ void loop() {
 //
 //  Then, forever, one brief pulse every 5 s:
 //    green                alive, battery fine or not measured
-//    amber                battery below BAT_LOW_MV
+//    yellow               battery below BAT_LOW_MV
 //    red                  battery below BAT_CRIT_MV
+//
+//  Slow red blinks with no identify sequence: the low-voltage cutoff
+//  fired. Charge the cell and power-cycle. Recover the board with a
+//  double-tap on RESET -- the ROM bootloader runs regardless of deep
+//  sleep, and the port comes back.
 //
 //  Arm the beacon, count violet, count blue, check the pulse colour,
 //  close the box. That is the whole pre-flight check, no phone needed.
