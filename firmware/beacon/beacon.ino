@@ -62,12 +62,12 @@
 
 // ---- PER-BEACON SETTINGS --------------------------------------------
 #define HUNT_ID      1        // hunt number, MAJOR. Same across one hunt.
-#define STEP_ID      2        // step number, high byte of MINOR. One per beacon.
+#define STEP_ID      1        // step number, high byte of MINOR. One per beacon.
 #define TX_POWER_1M  (-62)    // raw RSSI an iPhone reads at 1 m. MEASURE IT,
                               // per unit, in the final enclosure.
 
 // ---- FEATURES -------------------------------------------------------
-#define ENABLE_BATTERY_TELEMETRY  0   // 1 only once a VBAT divider is confirmed
+#define ENABLE_BATTERY_TELEMETRY  1   // 1 only once a VBAT divider is confirmed
 #define ENABLE_ADC_PROBE          0   // 1 to hunt for a divider on BAT_ADC_PIN
 #define ENABLE_LOW_VOLTAGE_CUTOFF 1   // stop and sleep before the cell is ruined
 
